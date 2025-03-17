@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Order Details{% endblock %}
+{% block content %}
+<h2>Order Details</h2>
+<p>Order ID: {{ order.order_id }}</p>
+<p>Restaurant: {{ order.restaurant_name }}</p>
+<p>Delivery Address: {{ order.delivery_address }}</p>
+<p>Status: {{ order.status }}</p>
+<h4>Items:</h4>
+<ul>
+  {% for item in items %}
+  <li>{{ item.name }} x {{ item.quantity }} - ${{ item.item_price * item.quantity }}</li>
+  {% endfor %}
+</ul>
+<p>Total Amount: ${{ order.total_amount }}</p>
+{% if order.status == 'Delivered' %}
+  <a href="{{ url_for('add_review', order_id=order.order_id) }}" class="btn btn-primary">Add Review</a>
+{% endif %}
+{% endblock %}

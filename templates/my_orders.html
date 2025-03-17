@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}My Orders{% endblock %}
+{% block content %}
+<h2>My Orders</h2>
+{% if orders %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>Order ID</th>
+      <th>Restaurant</th>
+      <th>Date</th>
+      <th>Total</th>
+      <th>Status</th>
+      <th>Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for order in orders %}
+    <tr>
+      <td>{{ order.order_id }}</td>
+      <td>{{ order.restaurant_name }}</td>
+      <td>{{ order.order_date }}</td>
+      <td>${{ order.total_amount }}</td>
+      <td>{{ order.status }}</td>
+      <td><a href="{{ url_for('view_order', order_id=order.order_id) }}" class="btn btn-info btn-sm">View</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>You have no orders.</p>
+{% endif %}
+{% endblock %}
