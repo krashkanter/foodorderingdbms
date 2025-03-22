@@ -135,16 +135,19 @@
                     </div>
                     <div>
                         <p><strong>Customer:</strong> ${order.username}</p>
-                        <p><strong>Total:</strong> $${order.total_amount.toFixed(2)}</p>
+                        <p><strong>Total:</strong> ₹${order.total_amount.toFixed(2)}</p>
                         <p><strong>Delivery Address:</strong> ${order.delivery_address}</p>
                         <p><strong>Payment Method:</strong> ${order.payment_method}</p>
-                        <p><strong>Payment Status:</strong> ${order.payment_status ? 'Paid' : 'Not Paid'}</p>
+                        <p>
+                          <strong>Payment Status:</strong> ${order.payment_status ? 'Paid' : 'Not Paid'} 
+                          ${!order.payment_status ? `<button onclick="markAsPaid(${order.order_id})">Mark as Paid</button>` : ''}
+                        </p>
                         ${order.rejection_reason ? `<p><strong>Rejection Reason:</strong> ${order.rejection_reason}</p>` : ''}
                     </div>
                     <div class="order-items">
                         ${order.items.map(item => `
                             <div class="order-item">
-                                ${item.dish_name} x ${item.quantity} = $${(item.item_price * item.quantity).toFixed(2)}
+                                ${item.dish_name} x ${item.quantity} = ₹${(item.item_price * item.quantity).toFixed(2)}
                                 ${item.special_instructions ? '<br>Note: ' + item.special_instructions : ''}
                             </div>
                         `).join('')}
@@ -205,6 +208,24 @@
             .catch(error => {
                 console.error('Error updating order status:', error);
                 alert('Error updating order status.');
+            });
+        }
+
+        // New function to update the payment status to true (Paid)
+        function markAsPaid(orderId) {
+            fetch(`/orders/${orderId}/payment`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ payment_status: true })
+            })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message);
+                fetchOrders();
+            })
+            .catch(error => {
+                console.error('Error updating payment status:', error);
+                alert('Error updating payment status.');
             });
         }
     </script>

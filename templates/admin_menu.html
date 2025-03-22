@@ -110,7 +110,7 @@
                     html = '<ul>';
                     dishes.forEach(dish => {
                         html += `<li>
-                            <strong>${dish.name}</strong> - $${dish.price.toFixed(2)} - ${dish.category || 'No category'} 
+                            <strong>${dish.name}</strong> - ₹${dish.price.toFixed(2)} - ${dish.category || 'No category'} 
                             ${dish.is_vegetarian ? '<em>(Vegetarian)</em>' : ''}
                             <button onclick="deleteDish(${dish.dish_id})" style="float:right;">Delete</button>
                         </li>`;

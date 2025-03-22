@@ -153,7 +153,7 @@
                             <td>${order.order_id}</td>
                             <td>${order.username}</td>
                             <td>${date}</td>
-                            <td>$${order.total_amount.toFixed(2)}</td>
+                            <td>₹${order.total_amount.toFixed(2)}</td>
                             <td><span class="${statusClass}">${order.status}</span></td>
                         </tr>`;
                     });
@@ -194,7 +194,7 @@
                 .then(stats => {
                     const statsHtml = `
                         <p>Total Orders: ${stats.total_orders}</p>
-                        <p>Total Revenue: $${stats.total_revenue.toFixed(2)}</p>
+                        <p>Total Revenue: ₹${stats.total_revenue.toFixed(2)}</p>
                         <p>Pending Orders: ${stats.pending_orders}</p>
                     `;
                     document.getElementById('quick-stats').innerHTML = statsHtml;

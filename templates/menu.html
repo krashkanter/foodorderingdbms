@@ -94,7 +94,7 @@
     <div class="cart">
         <h2>Your Cart</h2>
         <div id="cart-items"></div>
-        <div id="cart-total">Total: $0.00</div>
+        <div id="cart-total">Total: ₹0.00</div>
         <h3>Checkout</h3>
         <form id="order-form">
             <label for="delivery-address">Delivery Address:</label>
@@ -153,7 +153,7 @@
                     dishDiv.innerHTML = `
                         <h3>${dish.name} ${dish.is_vegetarian ? '<span class="vegetarian">(Vegetarian)</span>' : ''}</h3>
                         <p>${dish.description}</p>
-                        <p><strong>Price: $${dish.price.toFixed(2)}</strong></p>
+                        <p><strong>Price: ₹${dish.price.toFixed(2)}</strong></p>
                         <label>Quantity: <input type="number" min="1" value="1" id="qty-${dish.dish_id}"></label>
                         <br>
                         <label>Special Instructions: <input type="text" id="instr-${dish.dish_id}"></label>
@@ -210,7 +210,7 @@
                 const itemDiv = document.createElement('div');
                 itemDiv.className = 'cart-item';
                 itemDiv.innerHTML = `
-                    ${item.name} x ${item.quantity} = $${itemTotal.toFixed(2)}
+                    ${item.name} x ${item.quantity} = ₹${itemTotal.toFixed(2)}
                     ${item.special_instructions ? '<br>Note: ' + item.special_instructions : ''}
                     <button onclick="removeFromCart(${index})" style="float: right;">Remove</button>
                 `;
@@ -218,7 +218,7 @@
                 cartContainer.appendChild(itemDiv);
             });
             
-            document.getElementById('cart-total').textContent = `Total: $${total.toFixed(2)}`;
+            document.getElementById('cart-total').textContent = `Total: ₹${total.toFixed(2)}`;
         }
         
         document.getElementById('order-form').addEventListener('submit', function(e) {

@@ -238,7 +238,7 @@ def place_order():
         delivery_address=data['delivery_address'],
         total_amount=total_amount,
         payment_method=data['payment_method'],
-        payment_status=data.get('payment_status', False)
+        payment_status = False if data.get('payment_method') == 'Cash on Delivery' else True
     )
     db.session.add(new_order)
     db.session.flush()  # To obtain order_id
@@ -418,10 +418,26 @@ def admin_stats():
     }
     return jsonify(stats), 200
 
+@app.route('/orders/<int:order_id>/payment', methods=['PUT'])
+@admin_required
+def update_payment_status(order_id):
+    order = Order.query.get_or_404(order_id)
+    data = request.get_json()
+    if 'payment_status' not in data:
+        return jsonify({'message': 'Payment status is required'}), 400
+    order.payment_status = data['payment_status']
+    db.session.commit()
+    status_text = 'Paid' if order.payment_status else 'Not Paid'
+    return jsonify({'message': f'Payment status updated to {status_text}'}), 200
+
 # Routes to serve HTML templates
 @app.route('/')
 def home():
     # Render the login page as the home page.
+    return render_template('login.html')
+
+@app.route('/index.html')
+def index():
     return render_template('login.html')
 
 @app.route('/admin_dashboard.html')

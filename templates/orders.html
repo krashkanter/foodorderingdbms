@@ -155,7 +155,7 @@
                     order.items.forEach(item => {
                         itemsHtml += `
                             <div class="order-item">
-                                ${item.dish_name} x ${item.quantity} = $${(item.item_price * item.quantity).toFixed(2)}
+                                ${item.dish_name} x ${item.quantity} = ₹${(item.item_price * item.quantity).toFixed(2)}
                                 ${item.special_instructions ? '<br>Note: ' + item.special_instructions : ''}
                             </div>
                         `;
@@ -163,7 +163,7 @@
                     itemsHtml += '</div>';
                     
                     let detailsHtml = `
-                        <p><strong>Total Amount:</strong> $${order.total_amount.toFixed(2)}</p>
+                        <p><strong>Total Amount:</strong> ₹${order.total_amount.toFixed(2)}</p>
                         <p><strong>Delivery Address:</strong> ${order.delivery_address}</p>
                         <p><strong>Payment Method:</strong> ${order.payment_method}</p>
                         <p><strong>Payment Status:</strong> ${order.payment_status ? 'Paid' : 'Not Paid'}</p>
