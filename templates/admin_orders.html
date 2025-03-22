@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Order Management</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #c0c0c0;
+            margin: 20px;
+        }
+        .navbar {
+            background-color: #800000;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        .navbar a {
+            color: white;
+            margin-right: 15px;
+            text-decoration: none;
+        }
+        .navbar .logout {
+            float: right;
+        }
+        h1 {
+            color: #800000;
+        }
+        .filter-options {
+            margin-bottom: 15px;
+        }
+        button {
+            background-color: #008080;
+            color: white;
+            padding: 5px 10px;
+            margin-right: 5px;
+            cursor: pointer;
+        }
+        .order {
+            background-color: #f0f0f0;
+            border: 2px solid black;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        .order-header {
+            background-color: #008080;
+            color: white;
+            padding: 5px;
+            margin-bottom: 10px;
+        }
+        .order-items {
+            margin-left: 20px;
+        }
+        .order-item {
+            padding: 5px;
+            border-bottom: 1px solid gray;
+        }
+        label, select, input {
+            margin: 5px 0;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <a href="/admin_dashboard.html">Dashboard</a>
+        <a href="/admin_menu.html">Manage Menu</a>
+        <a href="/admin_orders.html">Manage Orders</a>
+        <a href="/admin_reviews.html">Reviews</a>
+        <a href="#" class="logout" id="logoutButton">Logout</a>
+    </div>
+    
+    <h1>Admin Order Management</h1>
+    
+    <div class="filter-options">
+        <b>Filter by status:</b>
+        <button onclick="filterOrders('all')">All</button>
+        <button onclick="filterOrders('Pending')">Pending</button>
+        <button onclick="filterOrders('Confirmed')">Confirmed</button>
+        <button onclick="filterOrders('Preparing')">Preparing</button>
+        <button onclick="filterOrders('Ready for Pickup')">Ready for Pickup</button>
+        <button onclick="filterOrders('Out for Delivery')">Out for Delivery</button>
+        <button onclick="filterOrders('Delivered')">Delivered</button>
+        <button onclick="filterOrders('Rejected')">Rejected</button>
+        <button onclick="filterOrders('Cancelled')">Cancelled</button>
+    </div>
+    
+    <div id="orders-container">
+        <p>Loading orders...</p>
+    </div>
+    
+    <script>
+        let ordersData = [];
+        let currentFilter = 'all';
+
+        window.onload = function() {
+            fetchOrders();
+            document.getElementById('logoutButton').addEventListener('click', function(e) {
+                e.preventDefault();
+                fetch('/logout', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => window.location.href = '/')
+                    .catch(error => console.error('Logout error:', error));
+            });
+        };
+
+        function fetchOrders() {
+            fetch('/orders')
+                .then(response => response.json())
+                .then(data => {
+                    ordersData = data.orders;
+                    displayOrders();
+                })
+                .catch(error => {
+                    console.error('Error fetching orders:', error);
+                    document.getElementById('orders-container').innerHTML = 'Error loading orders.';
+                });
+        }
+
+        function displayOrders() {
+            const container = document.getElementById('orders-container');
+            container.innerHTML = '';
+            const filtered = ordersData.filter(order => currentFilter === 'all' || order.status === currentFilter);
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<p>No orders found.</p>';
+                return;
+            }
+
+            filtered.forEach(order => {
+                const orderDate = new Date(order.order_date).toLocaleString();
+                let orderDiv = document.createElement('div');
+                orderDiv.className = 'order';
+                orderDiv.innerHTML = `
+                    <div class="order-header">
+                        <strong>Order #${order.order_id}</strong> - ${orderDate} - <span id="status-${order.order_id}">${order.status}</span>
+                    </div>
+                    <div>
+                        <p><strong>Customer:</strong> ${order.username}</p>
+                        <p><strong>Total:</strong> $${order.total_amount.toFixed(2)}</p>
+                        <p><strong>Delivery Address:</strong> ${order.delivery_address}</p>
+                        <p><strong>Payment Method:</strong> ${order.payment_method}</p>
+                        <p><strong>Payment Status:</strong> ${order.payment_status ? 'Paid' : 'Not Paid'}</p>
+                        ${order.rejection_reason ? `<p><strong>Rejection Reason:</strong> ${order.rejection_reason}</p>` : ''}
+                    </div>
+                    <div class="order-items">
+                        ${order.items.map(item => `
+                            <div class="order-item">
+                                ${item.dish_name} x ${item.quantity} = $${(item.item_price * item.quantity).toFixed(2)}
+                                ${item.special_instructions ? '<br>Note: ' + item.special_instructions : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div>
+                        <label for="newStatus-${order.order_id}">Update Status:</label>
+                        <select id="newStatus-${order.order_id}">
+                            <option value="">Select</option>
+                            <option value="Pending">Pending</option>
+                            <option value="Confirmed">Confirmed</option>
+                            <option value="Preparing">Preparing</option>
+                            <option value="Ready for Pickup">Ready for Pickup</option>
+                            <option value="Out for Delivery">Out for Delivery</option>
+                            <option value="Delivered">Delivered</option>
+                            <option value="Rejected">Rejected</option>
+                            <option value="Cancelled">Cancelled</option>
+                        </select>
+                        <input type="text" id="rejectionReason-${order.order_id}" placeholder="Rejection Reason (if applicable)">
+                        <button onclick="updateOrderStatus(${order.order_id})">Update</button>
+                    </div>
+                `;
+                container.appendChild(orderDiv);
+            });
+        }
+
+        function filterOrders(status) {
+            currentFilter = status;
+            displayOrders();
+        }
+
+        function updateOrderStatus(orderId) {
+            const newStatus = document.getElementById('newStatus-' + orderId).value;
+            const rejectionReason = document.getElementById('rejectionReason-' + orderId).value;
+            if (newStatus === '') {
+                alert('Please select a new status.');
+                return;
+            }
+            let payload = { status: newStatus };
+            if (newStatus === 'Rejected' && rejectionReason.trim() === '') {
+                alert('Please provide a rejection reason.');
+                return;
+            }
+            if (newStatus === 'Rejected') {
+                payload.rejection_reason = rejectionReason;
+            }
+            fetch(`/orders/${orderId}/status`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message);
+                fetchOrders();
+            })
+            .catch(error => {
+                console.error('Error updating order status:', error);
+                alert('Error updating order status.');
+            });
+        }
+    </script>
+</body>
+</html>

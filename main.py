@@ -1,1316 +1,482 @@
-# app.py
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
-import mysql.connector
-from mysql.connector import Error
+# main.py
+from flask import Flask, request, jsonify, session, render_template
+from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+from datetime import datetime
 import os
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.config['SECRET_KEY'] = os.urandom(24)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql://admin:asdfghjkl@localhost/food_ordering_db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Database connection function
-def create_connection():
-    try:
-        connection = mysql.connector.connect(
-            host='localhost',
-            database='food_ordering_db',
-            user='admin',
-            password='asdfghjkl'
-        )
-        return connection
-    except Error as e:
-        print(f"Error connecting to MySQL: {e}")
-        return None
+db = SQLAlchemy(app)
 
-@app.context_processor
-def inject_logged_in():
-    return dict(logged_in=('user_id' in session))
+# Models
+class User(db.Model):
+    __tablename__ = 'Users'
+    user_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    password = db.Column(db.String(255), nullable=False)
+    email = db.Column(db.String(100), unique=True, nullable=False)
+    phone = db.Column(db.String(15))
+    is_admin = db.Column(db.Boolean, default=False)
+    registration_date = db.Column(db.DateTime, default=datetime.utcnow)
+    orders = db.relationship('Order', backref='user', lazy=True)
 
-# Home page
-@app.route('/')
-def home():
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        # Get restaurants
-        cursor.execute("SELECT * FROM Restaurants WHERE is_active = TRUE")
-        restaurants = cursor.fetchall()
-        
-        # Get categories
-        cursor.execute("SELECT * FROM Categories")
-        categories = cursor.fetchall()
-        
-        cursor.close()
-        connection.close()
-        
-        return render_template('index.html', 
-                              restaurants=restaurants, 
-                              categories=categories, 
-                              logged_in='user_id' in session)
-    return "Database connection error", 500
+class Dish(db.Model):
+    __tablename__ = 'Dishes'
+    dish_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text)
+    price = db.Column(db.Float, nullable=False)
+    is_vegetarian = db.Column(db.Boolean, default=False)
+    is_available = db.Column(db.Boolean, default=True)
+    category = db.Column(db.String(50))
 
-# User registration
-@app.route('/register', methods=['GET', 'POST'])
+class Order(db.Model):
+    __tablename__ = 'Orders'
+    order_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('Users.user_id'), nullable=False)
+    order_date = db.Column(db.DateTime, default=datetime.utcnow)
+    delivery_address = db.Column(db.Text, nullable=False)
+    total_amount = db.Column(db.Float, nullable=False)
+    status = db.Column(db.Enum('Pending', 'Confirmed', 'Preparing', 'Ready for Pickup', 'Out for Delivery', 'Delivered', 'Rejected', 'Cancelled'), default='Pending')
+    payment_method = db.Column(db.Enum('Credit Card', 'Debit Card', 'Cash on Delivery', 'Digital Wallet'), nullable=False)
+    payment_status = db.Column(db.Boolean, default=False)
+    rejection_reason = db.Column(db.Text)
+    order_items = db.relationship('OrderItem', backref='order', lazy=True, cascade="all, delete-orphan")
+
+class OrderItem(db.Model):
+    __tablename__ = 'OrderItems'
+    order_item_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    order_id = db.Column(db.Integer, db.ForeignKey('Orders.order_id'), nullable=False)
+    dish_id = db.Column(db.Integer, db.ForeignKey('Dishes.dish_id'), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    item_price = db.Column(db.Float, nullable=False)
+    special_instructions = db.Column(db.Text)
+    dish = db.relationship('Dish')
+
+class Review(db.Model):
+    __tablename__ = 'Reviews'
+    review_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('Users.user_id'), nullable=False)
+    order_id = db.Column(db.Integer, db.ForeignKey('Orders.order_id'))
+    rating = db.Column(db.Integer, nullable=False)
+    comment = db.Column(db.Text)
+    review_date = db.Column(db.DateTime, default=datetime.utcnow)
+    user = db.relationship('User')
+    order = db.relationship('Order')
+
+# Authentication decorators
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'message': 'Authentication required'}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'message': 'Authentication required'}), 401
+        user = User.query.filter_by(user_id=session['user_id']).first()
+        if not user or not user.is_admin:
+            return jsonify({'message': 'Admin privileges required'}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Authentication routes
+@app.route('/register', methods=['POST'])
 def register():
-    if request.method == 'POST':
-        username = request.form['username']
-        email = request.form['email']
-        password = request.form['password']
-        phone = request.form['phone']
-        address = request.form['address']
-        
-        # Check if username or email exists
-        connection = create_connection()
-        if connection:
-            cursor = connection.cursor()
-            cursor.execute("SELECT * FROM Users WHERE username = %s OR email = %s", (username, email))
-            existing_user = cursor.fetchone()
-            
-            if existing_user:
-                cursor.close()
-                connection.close()
-                flash("Username or email already exists!")
-                return redirect(url_for('register'))
-            
-            # Create new user
-            hashed_password = generate_password_hash(password)
-            cursor.execute(
-                "INSERT INTO Users (username, password, email, phone, address) VALUES (%s, %s, %s, %s, %s)",
-                (username, hashed_password, email, phone, address)
-            )
-            connection.commit()
-            cursor.close()
-            connection.close()
-            
-            flash("Registration successful! Please log in.")
-            return redirect(url_for('login'))
-        
-        return "Database connection error", 500
-        
-    return render_template('register.html')
+    data = request.get_json()
+    if User.query.filter_by(username=data['username']).first():
+        return jsonify({'message': 'Username already exists'}), 409
+    if User.query.filter_by(email=data['email']).first():
+        return jsonify({'message': 'Email already exists'}), 409
+    hashed_password = generate_password_hash(data['password'])
+    new_user = User(
+        username=data['username'],
+        password=hashed_password,
+        email=data['email'],
+        phone=data.get('phone', None),
+        is_admin=data.get('is_admin', False)
+    )
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({'message': 'User registered successfully'}), 201
 
-# User login
-@app.route('/login', methods=['GET', 'POST'])
+@app.route('/login', methods=['POST'])
 def login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        
-        connection = create_connection()
-        if connection:
-            cursor = connection.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM Users WHERE username = %s", (username,))
-            user = cursor.fetchone()
-            cursor.close()
-            connection.close()
-            
-            if user and check_password_hash(user['password'], password):
-                session['user_id'] = user['user_id']
-                session['username'] = user['username']
-                flash("Login successful!")
-                return redirect(url_for('home'))
-            else:
-                flash("Invalid username or password!")
-                
-        else:
-            flash("Database connection error!")
-            
-    return render_template('login.html')
+    data = request.get_json()
+    user = User.query.filter_by(username=data['username']).first()
+    if not user or not check_password_hash(user.password, data['password']):
+        return jsonify({'message': 'Invalid credentials'}), 401
+    session['user_id'] = user.user_id
+    return jsonify({
+        'message': 'Logged in successfully',
+        'user': {
+            'user_id': user.user_id,
+            'username': user.username,
+            'email': user.email,
+            'is_admin': user.is_admin
+        }
+    }), 200
 
-# Logout
-@app.route('/logout')
+@app.route('/logout', methods=['POST'])
 def logout():
     session.pop('user_id', None)
-    session.pop('username', None)
-    flash("You have been logged out.")
-    return redirect(url_for('home'))
+    return jsonify({'message': 'Logged out successfully'}), 200
 
-# Restaurant menu
-@app.route('/restaurant/<int:restaurant_id>')
-def restaurant_menu(restaurant_id):
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        # Get restaurant info
-        cursor.execute("SELECT * FROM Restaurants WHERE restaurant_id = %s", (restaurant_id,))
-        restaurant = cursor.fetchone()
-        
-        if not restaurant:
-            cursor.close()
-            connection.close()
-            flash("Restaurant not found!")
-            return redirect(url_for('home'))
-        
-        # Get menu items grouped by category
-        cursor.execute("""
-            SELECT m.*, c.name as category_name 
-            FROM MenuItems m 
-            LEFT JOIN Categories c ON m.category_id = c.category_id 
-            WHERE m.restaurant_id = %s AND m.is_available = TRUE
-            ORDER BY c.name, m.name
-        """, (restaurant_id,))
-        
-        menu_items = cursor.fetchall()
-        
-        # Group items by category
-        categories = {}
-        for item in menu_items:
-            category = item['category_name'] or 'Uncategorized'
-            if category not in categories:
-                categories[category] = []
-            categories[category].append(item)
-        
-        cursor.close()
-        connection.close()
-        
-        return render_template('restaurant.html', 
-                              restaurant=restaurant, 
-                              categories=categories, 
-                              logged_in='user_id' in session)
-    
-    return "Database connection error", 500
+# Dish routes
+@app.route('/dishes', methods=['GET'])
+def get_dishes():
+    available = request.args.get('available')
+    category = request.args.get('category')
+    query = Dish.query
+    if available and available.lower() == 'true':
+        query = query.filter_by(is_available=True)
+    if category:
+        query = query.filter_by(category=category)
+    dishes = query.all()
+    return jsonify({
+        'dishes': [{
+            'dish_id': dish.dish_id,
+            'name': dish.name,
+            'description': dish.description,
+            'price': dish.price,
+            'is_vegetarian': dish.is_vegetarian,
+            'is_available': dish.is_available,
+            'category': dish.category
+        } for dish in dishes]
+    }), 200
 
-# Add to cart functionality
-@app.route('/add_to_cart', methods=['POST'])
-def add_to_cart():
-    if 'user_id' not in session:
-        flash('Please log in first!')
-        return redirect(url_for('login'))
-    
-    item_id = request.form.get('item_id')
-    quantity = int(request.form.get('quantity', 1))
-    
-    if 'cart' not in session:
-        session['cart'] = []
-    
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT m.*, r.restaurant_id, r.name as restaurant_name 
-            FROM MenuItems m
-            JOIN Restaurants r ON m.restaurant_id = r.restaurant_id
-            WHERE m.item_id = %s
-        """, (item_id,))
-        
-        item = cursor.fetchone()
-        cursor.close()
-        connection.close()
-        
-        if not item:
-            flash('Item not found!')
-            return redirect(url_for('home'))
-        
-        if session['cart'] and session['cart'][0]['restaurant_id'] != item['restaurant_id']:
-            flash('Your cart contains items from another restaurant. Clear your cart first!')
-            return redirect(url_for('home'))
-        
-        for cart_item in session['cart']:
-            if cart_item['item_id'] == int(item_id):
-                cart_item['quantity'] += quantity
-                session.modified = True
-                flash(f"Added {quantity} more {item['name']} to your cart.")
-                return redirect(url_for('view_cart'))
-        
-        cart_item = {
-            'item_id': item['item_id'],
-            'name': item['name'],
-            'price': float(item['price']),
+@app.route('/dishes/<int:dish_id>', methods=['GET'])
+def get_dish(dish_id):
+    dish = Dish.query.get_or_404(dish_id)
+    return jsonify({
+        'dish_id': dish.dish_id,
+        'name': dish.name,
+        'description': dish.description,
+        'price': dish.price,
+        'is_vegetarian': dish.is_vegetarian,
+        'is_available': dish.is_available,
+        'category': dish.category
+    }), 200
+
+@app.route('/dishes', methods=['POST'])
+@admin_required
+def add_dish():
+    data = request.get_json()
+    new_dish = Dish(
+        name=data['name'],
+        description=data.get('description', ''),
+        price=data['price'],
+        is_vegetarian=data.get('is_vegetarian', False),
+        is_available=data.get('is_available', True),
+        category=data.get('category', '')
+    )
+    db.session.add(new_dish)
+    db.session.commit()
+    return jsonify({
+        'message': 'Dish added successfully',
+        'dish_id': new_dish.dish_id
+    }), 201
+
+@app.route('/dishes/<int:dish_id>', methods=['PUT'])
+@admin_required
+def update_dish(dish_id):
+    dish = Dish.query.get_or_404(dish_id)
+    data = request.get_json()
+    dish.name = data.get('name', dish.name)
+    dish.description = data.get('description', dish.description)
+    dish.price = data.get('price', dish.price)
+    dish.is_vegetarian = data.get('is_vegetarian', dish.is_vegetarian)
+    dish.is_available = data.get('is_available', dish.is_available)
+    dish.category = data.get('category', dish.category)
+    db.session.commit()
+    return jsonify({'message': 'Dish updated successfully'}), 200
+
+@app.route('/dishes/<int:dish_id>', methods=['DELETE'])
+@admin_required
+def delete_dish(dish_id):
+    dish = Dish.query.get_or_404(dish_id)
+    db.session.delete(dish)
+    db.session.commit()
+    return jsonify({'message': 'Dish deleted successfully'}), 200
+
+# Order routes
+@app.route('/orders', methods=['POST'])
+@login_required
+def place_order():
+    data = request.get_json()
+    dishes_data = data.get('dishes', [])
+    if not dishes_data:
+        return jsonify({'message': 'Order must contain at least one dish'}), 400
+    total_amount = 0
+    order_items_data = []
+    for dish_data in dishes_data:
+        dish = Dish.query.get(dish_data['dish_id'])
+        if not dish:
+            return jsonify({'message': f"Dish with id {dish_data['dish_id']} not found"}), 404
+        if not dish.is_available:
+            return jsonify({'message': f"Dish '{dish.name}' is not available"}), 400
+        quantity = dish_data.get('quantity', 1)
+        item_price = dish.price
+        total_amount += quantity * item_price
+        order_items_data.append({
+            'dish_id': dish.dish_id,
             'quantity': quantity,
-            'restaurant_id': item['restaurant_id'],
-            'restaurant_name': item['restaurant_name']
-        }
-        
-        session['cart'].append(cart_item)
-        session.modified = True
-        flash(f"Added {item['name']} to your cart.")
-        return redirect(url_for('view_cart'))
-    
-    flash('Database error!')
-    return redirect(url_for('home'))
+            'item_price': item_price,
+            'special_instructions': dish_data.get('special_instructions', '')
+        })
+    new_order = Order(
+        user_id=session['user_id'],
+        delivery_address=data['delivery_address'],
+        total_amount=total_amount,
+        payment_method=data['payment_method'],
+        payment_status=data.get('payment_status', False)
+    )
+    db.session.add(new_order)
+    db.session.flush()  # To obtain order_id
+    for item_data in order_items_data:
+        order_item = OrderItem(
+            order_id=new_order.order_id,
+            dish_id=item_data['dish_id'],
+            quantity=item_data['quantity'],
+            item_price=item_data['item_price'],
+            special_instructions=item_data['special_instructions']
+        )
+        db.session.add(order_item)
+    db.session.commit()
+    return jsonify({
+        'message': 'Order placed successfully',
+        'order_id': new_order.order_id,
+        'total_amount': new_order.total_amount
+    }), 201
 
-# View cart
-@app.route('/cart')
-def view_cart():
-    cart = session.get('cart', [])
-    cart_total = sum(item['price'] * item['quantity'] for item in cart)
-    return render_template('cart.html', cart=cart, cart_total=cart_total)
-
-# Remove from cart
-@app.route('/remove_from_cart/<int:item_id>')
-def remove_from_cart(item_id):
-    if 'cart' in session:
-        session['cart'] = [item for item in session['cart'] if item['item_id'] != item_id]
-        session.modified = True
-    return redirect(url_for('view_cart'))
-
-# Checkout page
-@app.route('/checkout', methods=['GET', 'POST'])
-def checkout():
-    if 'user_id' not in session:
-        flash("Please log in to checkout")
-        return redirect(url_for('login'))
-    
-    if not session.get('cart'):
-        flash("Your cart is empty!")
-        return redirect(url_for('home'))
-    
-    if request.method == 'POST':
-        user_id = session['user_id']
-        delivery_address = request.form['address']
-        payment_method = request.form['payment_method']
-        restaurant_id = session['cart'][0]['restaurant_id']
-        total_amount = sum(item['price'] * item['quantity'] for item in session['cart'])
-        
-        connection = create_connection()
-        if connection:
-            try:
-                cursor = connection.cursor()
-                
-                # Start transaction
-                connection.start_transaction()
-                
-                # Create order
-                cursor.execute("""
-                    INSERT INTO Orders (user_id, restaurant_id, delivery_address, total_amount, payment_method)
-                    VALUES (%s, %s, %s, %s, %s)
-                """, (user_id, restaurant_id, delivery_address, total_amount, payment_method))
-                
-                order_id = cursor.lastrowid
-                
-                # Add order items
-                for item in session['cart']:
-                    cursor.execute("""
-                        INSERT INTO OrderItems (order_id, item_id, quantity, item_price)
-                        VALUES (%s, %s, %s, %s)
-                    """, (order_id, item['item_id'], item['quantity'], item['price']))
-                
-                # Commit transaction
-                connection.commit()
-                
-                # Clear cart
-                session.pop('cart', None)
-                
-                flash("Order placed successfully!")
-                return redirect(url_for('order_confirmation', order_id=order_id))
-                
-            except Error as e:
-                # Rollback in case of error
-                connection.rollback()
-                print(f"Database error: {e}")
-                flash("Error processing your order. Please try again.")
-                
-            finally:
-                cursor.close()
-                connection.close()
-        
-        else:
-            flash("Database connection error")
-            
-    # GET method - show checkout form
-    user = None
-    if 'user_id' in session:
-        connection = create_connection()
-        if connection:
-            cursor = connection.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM Users WHERE user_id = %s", (session['user_id'],))
-            user = cursor.fetchone()
-            cursor.close()
-            connection.close()
-    
-    cart = session.get('cart', [])
-    cart_total = sum(item['price'] * item['quantity'] for item in cart)
-    return render_template('checkout.html', cart=cart, cart_total=cart_total, user=user)
-
-# Order confirmation
-@app.route('/order_confirmation/<int:order_id>')
-def order_confirmation(order_id):
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        # Get order details
-        cursor.execute("""
-            SELECT o.*, r.name as restaurant_name
-            FROM Orders o
-            JOIN Restaurants r ON o.restaurant_id = r.restaurant_id
-            WHERE o.order_id = %s AND o.user_id = %s
-        """, (order_id, session['user_id']))
-        
-        order = cursor.fetchone()
-        
-        if not order:
-            cursor.close()
-            connection.close()
-            flash("Order not found!")
-            return redirect(url_for('my_orders'))
-        
-        # Get order items
-        cursor.execute("""
-            SELECT oi.*, m.name
-            FROM OrderItems oi
-            JOIN MenuItems m ON oi.item_id = m.item_id
-            WHERE oi.order_id = %s
-        """, (order_id,))
-        
-        order_items = cursor.fetchall()
-        
-        cursor.close()
-        connection.close()
-        
-        return render_template('order_confirmation.html', order=order, items=order_items)
-    
-    return "Database connection error", 500
-
-# User orders
-@app.route('/my_orders')
-def my_orders():
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        # Get user orders
-        cursor.execute("""
-            SELECT o.*, r.name as restaurant_name
-            FROM Orders o
-            JOIN Restaurants r ON o.restaurant_id = r.restaurant_id
-            WHERE o.user_id = %s
-            ORDER BY o.order_date DESC
-        """, (session['user_id'],))
-        
-        orders = cursor.fetchall()
-        cursor.close()
-        connection.close()
-        
-        return render_template('my_orders.html', orders=orders)
-    
-    return "Database connection error", 500
-
-# View order details
-@app.route('/order/<int:order_id>')
-def view_order(order_id):
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        # Get order details
-        cursor.execute("""
-            SELECT o.*, r.name as restaurant_name
-            FROM Orders o
-            JOIN Restaurants r ON o.restaurant_id = r.restaurant_id
-            WHERE o.order_id = %s AND o.user_id = %s
-        """, (order_id, session['user_id']))
-        
-        order = cursor.fetchone()
-        
-        if not order:
-            cursor.close()
-            connection.close()
-            flash("Order not found!")
-            return redirect(url_for('my_orders'))
-        
-        # Get order items
-        cursor.execute("""
-            SELECT oi.*, m.name
-            FROM OrderItems oi
-            JOIN MenuItems m ON oi.item_id = m.item_id
-            WHERE oi.order_id = %s
-        """, (order_id,))
-        
-        order_items = cursor.fetchall()
-        
-        cursor.close()
-        connection.close()
-        
-        return render_template('order_details.html', order=order, items=order_items)
-    
-    return "Database connection error", 500
-
-# Add review
-@app.route('/add_review/<int:order_id>', methods=['GET', 'POST'])
-def add_review(order_id):
-    if 'user_id' not in session:
-        return redirect(url_for('login'))
-    
-    connection = create_connection()
-    if not connection:
-        flash("Database connection error")
-        return redirect(url_for('my_orders'))
-    
-    cursor = connection.cursor(dictionary=True)
-    
-    # Verify order belongs to user and get restaurant_id
-    cursor.execute("""
-        SELECT o.*, r.name as restaurant_name
-        FROM Orders o
-        JOIN Restaurants r ON o.restaurant_id = r.restaurant_id
-        WHERE o.order_id = %s AND o.user_id = %s AND o.status = 'Delivered'
-    """, (order_id, session['user_id']))
-    
-    order = cursor.fetchone()
-    
-    if not order:
-        cursor.close()
-        connection.close()
-        flash("Order not found or not eligible for review!")
-        return redirect(url_for('my_orders'))
-    
-    # Check if review already exists
-    cursor.execute("""
-        SELECT * FROM Reviews 
-        WHERE order_id = %s AND user_id = %s
-    """, (order_id, session['user_id']))
-    
-    existing_review = cursor.fetchone()
-    
-    if request.method == 'POST':
-        rating = int(request.form['rating'])
-        comment = request.form['comment']
-        
-        try:
-            if existing_review:
-                # Update existing review
-                cursor.execute("""
-                    UPDATE Reviews 
-                    SET rating = %s, comment = %s, review_date = CURRENT_TIMESTAMP
-                    WHERE review_id = %s
-                """, (rating, comment, existing_review['review_id']))
-                flash("Review updated successfully!")
-            else:
-                # Add new review
-                cursor.execute("""
-                    INSERT INTO Reviews (user_id, restaurant_id, order_id, rating, comment)
-                    VALUES (%s, %s, %s, %s, %s)
-                """, (session['user_id'], order['restaurant_id'], order_id, rating, comment))
-                flash("Review added successfully!")
-            
-            # Update restaurant average rating
-            cursor.execute("""
-                UPDATE Restaurants 
-                SET avg_rating = (
-                    SELECT AVG(rating) 
-                    FROM Reviews 
-                    WHERE restaurant_id = %s
-                )
-                WHERE restaurant_id = %s
-            """, (order['restaurant_id'], order['restaurant_id']))
-            
-            connection.commit()
-            
-            return redirect(url_for('view_order', order_id=order_id))
-            
-        except Error as e:
-            connection.rollback()
-            print(f"Database error: {e}")
-            flash("Error processing your review. Please try again.")
-        
-    cursor.close()
-    connection.close()
-    
-    return render_template('add_review.html', order=order, existing_review=existing_review)
-
-# Admin routes - Restaurant Management
-@app.route('/admin/login', methods=['GET', 'POST'])
-def admin_login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        
-        # For simplicity, using hardcoded admin credentials
-        # In a production environment, you should store admin users in the database
-        if username == 'admin' and password == 'admin123':
-            session['admin'] = True
-            flash("Admin login successful!")
-            return redirect(url_for('admin_dashboard'))
-        else:
-            flash("Invalid admin credentials!")
-    
-    return render_template('admin_login.html')
-
-@app.route('/admin/logout')
-def admin_logout():
-    session.pop('admin', None)
-    flash("Admin logged out successfully!")
-    return redirect(url_for('admin_login'))
-
-@app.route('/admin/dashboard')
-def admin_dashboard():
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        # Get statistics
-        cursor.execute("SELECT COUNT(*) as total_restaurants FROM Restaurants")
-        restaurant_count = cursor.fetchone()['total_restaurants']
-        
-        cursor.execute("SELECT COUNT(*) as total_users FROM Users")
-        user_count = cursor.fetchone()['total_users']
-        
-        cursor.execute("SELECT COUNT(*) as total_orders FROM Orders")
-        order_count = cursor.fetchone()['total_orders']
-        
-        cursor.execute("""
-            SELECT status, COUNT(*) as count 
-            FROM Orders 
-            GROUP BY status
-        """)
-        order_status = cursor.fetchall()
-        
-        cursor.execute("""
-            SELECT DATE(order_date) as date, COUNT(*) as orders, SUM(total_amount) as revenue
-            FROM Orders
-            WHERE order_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-            GROUP BY DATE(order_date)
-            ORDER BY date
-        """)
-        daily_stats = cursor.fetchall()
-        
-        cursor.close()
-        connection.close()
-        
-        return render_template('admin_dashboard.html', 
-                              restaurant_count=restaurant_count,
-                              user_count=user_count,
-                              order_count=order_count,
-                              order_status=order_status,
-                              daily_stats=daily_stats)
-    
-    return "Database connection error", 500
-
-@app.route('/admin/restaurants')
-def admin_restaurants():
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        cursor.execute("""
-            SELECT r.*, COUNT(DISTINCT m.item_id) as menu_items, COUNT(DISTINCT o.order_id) as orders
-            FROM Restaurants r
-            LEFT JOIN MenuItems m ON r.restaurant_id = m.restaurant_id
-            LEFT JOIN Orders o ON r.restaurant_id = o.restaurant_id
-            GROUP BY r.restaurant_id
-            ORDER BY r.name
-        """)
-        
-        restaurants = cursor.fetchall()
-        cursor.close()
-        connection.close()
-        
-        return render_template('admin_restaurants.html', restaurants=restaurants)
-    
-    return "Database connection error", 500
-
-@app.route('/admin/restaurant/add', methods=['GET', 'POST'])
-def admin_add_restaurant():
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    if request.method == 'POST':
-        name = request.form['name']
-        description = request.form['description']
-        address = request.form['address']
-        phone = request.form['phone']
-        opening_time = request.form['opening_time']
-        closing_time = request.form['closing_time']
-        
-        connection = create_connection()
-        if connection:
-            try:
-                cursor = connection.cursor()
-                
-                cursor.execute("""
-                    INSERT INTO Restaurants (name, description, address, phone, opening_time, closing_time)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (name, description, address, phone, opening_time, closing_time))
-                
-                connection.commit()
-                flash("Restaurant added successfully!")
-                return redirect(url_for('admin_restaurants'))
-                
-            except Error as e:
-                connection.rollback()
-                print(f"Database error: {e}")
-                flash("Error adding restaurant. Please try again.")
-                
-            finally:
-                cursor.close()
-                connection.close()
-    
-    return render_template('admin_add_restaurant.html')
-
-@app.route('/admin/restaurant/edit/<int:restaurant_id>', methods=['GET', 'POST'])
-def admin_edit_restaurant(restaurant_id):
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if not connection:
-        flash("Database connection error")
-        return redirect(url_for('admin_restaurants'))
-    
-    cursor = connection.cursor(dictionary=True)
-    
-    # Get restaurant details
-    cursor.execute("SELECT * FROM Restaurants WHERE restaurant_id = %s", (restaurant_id,))
-    restaurant = cursor.fetchone()
-    
-    if not restaurant:
-        cursor.close()
-        connection.close()
-        flash("Restaurant not found!")
-        return redirect(url_for('admin_restaurants'))
-    
-    if request.method == 'POST':
-        name = request.form['name']
-        description = request.form['description']
-        address = request.form['address']
-        phone = request.form['phone']
-        opening_time = request.form['opening_time']
-        closing_time = request.form['closing_time']
-        is_active = 'is_active' in request.form
-        
-        try:
-            cursor.execute("""
-                UPDATE Restaurants
-                SET name = %s, description = %s, address = %s, phone = %s, 
-                    opening_time = %s, closing_time = %s, is_active = %s
-                WHERE restaurant_id = %s
-            """, (name, description, address, phone, opening_time, closing_time, is_active, restaurant_id))
-            
-            connection.commit()
-            flash("Restaurant updated successfully!")
-            return redirect(url_for('admin_restaurants'))
-            
-        except Error as e:
-            connection.rollback()
-            print(f"Database error: {e}")
-            flash("Error updating restaurant. Please try again.")
-    
-    cursor.close()
-    connection.close()
-    
-    return render_template('admin_edit_restaurant.html', restaurant=restaurant)
-
-@app.route('/admin/restaurant/delete/<int:restaurant_id>')
-def admin_delete_restaurant(restaurant_id):
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if connection:
-        try:
-            cursor = connection.cursor()
-            
-            # Check if restaurant has orders
-            cursor.execute("SELECT COUNT(*) FROM Orders WHERE restaurant_id = %s", (restaurant_id,))
-            order_count = cursor.fetchone()[0]
-            
-            if order_count > 0:
-                flash("Cannot delete restaurant with existing orders. Deactivate it instead.")
-                return redirect(url_for('admin_restaurants'))
-            
-            # Delete restaurant and related menu items (using CASCADE)
-            cursor.execute("DELETE FROM Restaurants WHERE restaurant_id = %s", (restaurant_id,))
-            
-            connection.commit()
-            flash("Restaurant deleted successfully!")
-            
-        except Error as e:
-            connection.rollback()
-            print(f"Database error: {e}")
-            flash("Error deleting restaurant.")
-            
-        finally:
-            cursor.close()
-            connection.close()
-    
-    return redirect(url_for('admin_restaurants'))
-
-@app.route('/admin/menu/<int:restaurant_id>')
-def admin_menu(restaurant_id):
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        # Get restaurant info
-        cursor.execute("SELECT * FROM Restaurants WHERE restaurant_id = %s", (restaurant_id,))
-        restaurant = cursor.fetchone()
-        
-        if not restaurant:
-            cursor.close()
-            connection.close()
-            flash("Restaurant not found!")
-            return redirect(url_for('admin_restaurants'))
-        
-        # Get menu items
-        cursor.execute("""
-            SELECT m.*, c.name as category_name 
-            FROM MenuItems m 
-            LEFT JOIN Categories c ON m.category_id = c.category_id 
-            WHERE m.restaurant_id = %s
-            ORDER BY c.name, m.name
-        """, (restaurant_id,))
-        
-        menu_items = cursor.fetchall()
-        
-        # Get categories for dropdown
-        cursor.execute("SELECT * FROM Categories ORDER BY name")
-        categories = cursor.fetchall()
-        
-        cursor.close()
-        connection.close()
-        
-        return render_template('admin_menu.html', 
-                              restaurant=restaurant, 
-                              menu_items=menu_items,
-                              categories=categories)
-    
-    return "Database connection error", 500
-
-@app.route('/admin/menu/add/<int:restaurant_id>', methods=['GET', 'POST'])
-def admin_add_menu_item(restaurant_id):
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if not connection:
-        flash("Database connection error")
-        return redirect(url_for('admin_restaurants'))
-    
-    cursor = connection.cursor(dictionary=True)
-    
-    # Get restaurant info
-    cursor.execute("SELECT * FROM Restaurants WHERE restaurant_id = %s", (restaurant_id,))
-    restaurant = cursor.fetchone()
-    
-    if not restaurant:
-        cursor.close()
-        connection.close()
-        flash("Restaurant not found!")
-        return redirect(url_for('admin_restaurants'))
-    
-    # Get categories for dropdown
-    cursor.execute("SELECT * FROM Categories ORDER BY name")
-    categories = cursor.fetchall()
-    
-    if request.method == 'POST':
-        name = request.form['name']
-        description = request.form['description']
-        price = float(request.form['price'])
-        category_id = request.form.get('category_id') or None
-        is_vegetarian = 'is_vegetarian' in request.form
-        is_available = 'is_available' in request.form
-        image_url = request.form.get('image_url') or None
-        
-        try:
-            cursor.execute("""
-                INSERT INTO MenuItems (restaurant_id, category_id, name, description, price, is_vegetarian, is_available, image_url)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (restaurant_id, category_id, name, description, price, is_vegetarian, is_available, image_url))
-            
-            connection.commit()
-            flash("Menu item added successfully!")
-            return redirect(url_for('admin_menu', restaurant_id=restaurant_id))
-            
-        except Error as e:
-            connection.rollback()
-            print(f"Database error: {e}")
-            flash("Error adding menu item. Please try again.")
-    
-    cursor.close()
-    connection.close()
-    
-    return render_template('admin_add_menu_item.html', restaurant=restaurant, categories=categories)
-
-@app.route('/admin/menu/edit/<int:item_id>', methods=['GET', 'POST'])
-def admin_edit_menu_item(item_id):
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if not connection:
-        flash("Database connection error")
-        return redirect(url_for('admin_restaurants'))
-    
-    cursor = connection.cursor(dictionary=True)
-    
-    # Get menu item details
-    cursor.execute("""
-        SELECT m.*, r.name as restaurant_name 
-        FROM MenuItems m
-        JOIN Restaurants r ON m.restaurant_id = r.restaurant_id
-        WHERE m.item_id = %s
-    """, (item_id,))
-    
-    menu_item = cursor.fetchone()
-    
-    if not menu_item:
-        cursor.close()
-        connection.close()
-        flash("Menu item not found!")
-        return redirect(url_for('admin_restaurants'))
-    
-    # Get categories for dropdown
-    cursor.execute("SELECT * FROM Categories ORDER BY name")
-    categories = cursor.fetchall()
-    
-    if request.method == 'POST':
-        name = request.form['name']
-        description = request.form['description']
-        price = float(request.form['price'])
-        category_id = request.form.get('category_id') or None
-        is_vegetarian = 'is_vegetarian' in request.form
-        is_available = 'is_available' in request.form
-        image_url = request.form.get('image_url') or None
-        
-        try:
-            cursor.execute("""
-                UPDATE MenuItems
-                SET name = %s, description = %s, price = %s, category_id = %s, 
-                    is_vegetarian = %s, is_available = %s, image_url = %s
-                WHERE item_id = %s
-            """, (name, description, price, category_id, is_vegetarian, is_available, image_url, item_id))
-            
-            connection.commit()
-            flash("Menu item updated successfully!")
-            return redirect(url_for('admin_menu', restaurant_id=menu_item['restaurant_id']))
-            
-        except Error as e:
-            connection.rollback()
-            print(f"Database error: {e}")
-            flash("Error updating menu item. Please try again.")
-    
-    cursor.close()
-    connection.close()
-    
-    return render_template('admin_edit_menu_item.html', item=menu_item, categories=categories)
-
-@app.route('/admin/menu/delete/<int:item_id>')
-def admin_delete_menu_item(item_id):
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if connection:
-        try:
-            cursor = connection.cursor(dictionary=True)
-            
-            # Get restaurant_id for redirection
-            cursor.execute("SELECT restaurant_id FROM MenuItems WHERE item_id = %s", (item_id,))
-            menu_item = cursor.fetchone()
-            
-            if not menu_item:
-                flash("Menu item not found!")
-                return redirect(url_for('admin_restaurants'))
-            
-            restaurant_id = menu_item['restaurant_id']
-            
-            # Check if menu item has orders
-            cursor.execute("SELECT COUNT(*) as count FROM OrderItems WHERE item_id = %s", (item_id,))
-            order_count = cursor.fetchone()['count']
-            
-            if order_count > 0:
-                flash("Cannot delete menu item with existing orders. Mark it as unavailable instead.")
-                return redirect(url_for('admin_menu', restaurant_id=restaurant_id))
-            
-            # Delete menu item
-            cursor.execute("DELETE FROM MenuItems WHERE item_id = %s", (item_id,))
-            
-            connection.commit()
-            flash("Menu item deleted successfully!")
-            return redirect(url_for('admin_menu', restaurant_id=restaurant_id))
-            
-        except Error as e:
-            connection.rollback()
-            print(f"Database error: {e}")
-            flash("Error deleting menu item.")
-            
-        finally:
-            cursor.close()
-            connection.close()
-    
-    return redirect(url_for('admin_restaurants'))
-
-@app.route('/admin/categories')
-def admin_categories():
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        cursor.execute("""
-            SELECT c.*, COUNT(m.item_id) as item_count
-            FROM Categories c
-            LEFT JOIN MenuItems m ON c.category_id = m.category_id
-            GROUP BY c.category_id
-            ORDER BY c.name
-        """)
-        
-        categories = cursor.fetchall()
-        cursor.close()
-        connection.close()
-        
-        return render_template('admin_categories.html', categories=categories)
-    
-    return "Database connection error", 500
-
-@app.route('/admin/category/add', methods=['GET', 'POST'])
-def admin_add_category():
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    if request.method == 'POST':
-        name = request.form['name']
-        description = request.form['description']
-        
-        connection = create_connection()
-        if connection:
-            try:
-                cursor = connection.cursor()
-                
-                cursor.execute("""
-                    INSERT INTO Categories (name, description)
-                    VALUES (%s, %s)
-                """, (name, description))
-                
-                connection.commit()
-                flash("Category added successfully!")
-                return redirect(url_for('admin_categories'))
-                
-            except Error as e:
-                connection.rollback()
-                print(f"Database error: {e}")
-                flash("Error adding category. Please try again.")
-                
-            finally:
-                cursor.close()
-                connection.close()
-    
-    return render_template('admin_add_category.html')
-
-@app.route('/admin/category/edit/<int:category_id>', methods=['GET', 'POST'])
-def admin_edit_category(category_id):
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if not connection:
-        flash("Database connection error")
-        return redirect(url_for('admin_categories'))
-    
-    cursor = connection.cursor(dictionary=True)
-    
-    # Get category details
-    cursor.execute("SELECT * FROM Categories WHERE category_id = %s", (category_id,))
-    category = cursor.fetchone()
-    
-    if not category:
-        cursor.close()
-        connection.close()
-        flash("Category not found!")
-        return redirect(url_for('admin_categories'))
-    
-    if request.method == 'POST':
-        name = request.form['name']
-        description = request.form['description']
-        
-        try:
-            cursor.execute("""
-                UPDATE Categories
-                SET name = %s, description = %s
-                WHERE category_id = %s
-            """, (name, description, category_id))
-            
-            connection.commit()
-            flash("Category updated successfully!")
-            return redirect(url_for('admin_categories'))
-            
-        except Error as e:
-            connection.rollback()
-            print(f"Database error: {e}")
-            flash("Error updating category. Please try again.")
-    
-    cursor.close()
-    connection.close()
-    
-    return render_template('admin_edit_category.html', category=category)
-
-@app.route('/admin/category/delete/<int:category_id>')
-def admin_delete_category(category_id):
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if connection:
-        try:
-            cursor = connection.cursor(dictionary=True)
-            
-            # Check if category has menu items
-            cursor.execute("SELECT COUNT(*) as count FROM MenuItems WHERE category_id = %s", (category_id,))
-            item_count = cursor.fetchone()['count']
-            
-            if item_count > 0:
-                flash(f"Cannot delete category with {item_count} menu items. Reassign menu items first.")
-                return redirect(url_for('admin_categories'))
-            
-            # Delete category
-            cursor.execute("DELETE FROM Categories WHERE category_id = %s", (category_id,))
-            
-            connection.commit()
-            flash("Category deleted successfully!")
-            
-        except Error as e:
-            connection.rollback()
-            print(f"Database error: {e}")
-            flash("Error deleting category.")
-            
-        finally:
-            cursor.close()
-            connection.close()
-    
-    return redirect(url_for('admin_categories'))
-
-@app.route('/admin/orders')
-def admin_orders():
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    # Get filter params
-    status = request.args.get('status', '')
-    restaurant_id = request.args.get('restaurant_id', '')
-    date_from = request.args.get('date_from', '')
-    date_to = request.args.get('date_to', '')
-    
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        # Get restaurants for filter dropdown
-        cursor.execute("SELECT restaurant_id, name FROM Restaurants ORDER BY name")
-        restaurants = cursor.fetchall()
-        
-        # Build query with filters
-        query = """
-            SELECT o.*, u.username, r.name as restaurant_name
-            FROM Orders o
-            JOIN Users u ON o.user_id = u.user_id
-            JOIN Restaurants r ON o.restaurant_id = r.restaurant_id
-            WHERE 1=1
-        """
-        params = []
-        
+@app.route('/orders', methods=['GET'])
+@login_required
+def get_orders():
+    user = User.query.get(session['user_id'])
+    if user.is_admin:
+        status = request.args.get('status')
+        user_id = request.args.get('user_id')
+        query = Order.query
         if status:
-            query += " AND o.status = %s"
-            params.append(status)
-        
-        if restaurant_id:
-            query += " AND o.restaurant_id = %s"
-            params.append(restaurant_id)
-        
-        if date_from:
-            query += " AND DATE(o.order_date) >= %s"
-            params.append(date_from)
-        
-        if date_to:
-            query += " AND DATE(o.order_date) <= %s"
-            params.append(date_to)
-        
-        query += " ORDER BY o.order_date DESC"
-        
-        cursor.execute(query, params)
-        orders = cursor.fetchall()
-        
-        cursor.close()
-        connection.close()
-        
-        return render_template('admin_orders.html', 
-                              orders=orders, 
-                              restaurants=restaurants,
-                              current_status=status,
-                              current_restaurant=restaurant_id,
-                              date_from=date_from,
-                              date_to=date_to)
-    
-    return "Database connection error", 500
+            query = query.filter_by(status=status)
+        if user_id:
+            query = query.filter_by(user_id=user_id)
+        orders = query.order_by(Order.order_date.desc()).all()
+    else:
+        status = request.args.get('status')
+        query = Order.query.filter_by(user_id=user.user_id)
+        if status:
+            query = query.filter_by(status=status)
+        orders = query.order_by(Order.order_date.desc()).all()
+    orders_data = []
+    for order in orders:
+        order_items = []
+        for item in order.order_items:
+            order_items.append({
+                'dish_id': item.dish_id,
+                'dish_name': item.dish.name,
+                'quantity': item.quantity,
+                'item_price': item.item_price,
+                'special_instructions': item.special_instructions
+            })
+        orders_data.append({
+            'order_id': order.order_id,
+            'user_id': order.user_id,
+            'username': order.user.username,
+            'order_date': order.order_date.isoformat(),
+            'delivery_address': order.delivery_address,
+            'total_amount': order.total_amount,
+            'status': order.status,
+            'payment_method': order.payment_method,
+            'payment_status': order.payment_status,
+            'rejection_reason': order.rejection_reason,
+            'items': order_items
+        })
+    return jsonify({'orders': orders_data}), 200
 
-@app.route('/admin/order/<int:order_id>')
-def admin_view_order(order_id):
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        # Get order details
-        cursor.execute("""
-            SELECT o.*, u.username, u.email, u.phone, r.name as restaurant_name
-            FROM Orders o
-            JOIN Users u ON o.user_id = u.user_id
-            JOIN Restaurants r ON o.restaurant_id = r.restaurant_id
-            WHERE o.order_id = %s
-        """, (order_id,))
-        
-        order = cursor.fetchone()
-        
-        if not order:
-            cursor.close()
-            connection.close()
-            flash("Order not found!")
-            return redirect(url_for('admin_orders'))
-        
-        # Get order items
-        cursor.execute("""
-            SELECT oi.*, m.name
-            FROM OrderItems oi
-            JOIN MenuItems m ON oi.item_id = m.item_id
-            WHERE oi.order_id = %s
-        """, (order_id,))
-        
-        order_items = cursor.fetchall()
-        
-        cursor.close()
-        connection.close()
-        
-        return render_template('admin_order_details.html', order=order, items=order_items)
-    
-    return "Database connection error", 500
+@app.route('/orders/<int:order_id>', methods=['GET'])
+@login_required
+def get_order(order_id):
+    user = User.query.get(session['user_id'])
+    order = Order.query.get_or_404(order_id)
+    if not user.is_admin and order.user_id != user.user_id:
+        return jsonify({'message': 'Access denied'}), 403
+    order_items = []
+    for item in order.order_items:
+        order_items.append({
+            'dish_id': item.dish_id,
+            'dish_name': item.dish.name,
+            'quantity': item.quantity,
+            'item_price': item.item_price,
+            'special_instructions': item.special_instructions
+        })
+    return jsonify({
+        'order_id': order.order_id,
+        'user_id': order.user_id,
+        'username': order.user.username,
+        'order_date': order.order_date.isoformat(),
+        'delivery_address': order.delivery_address,
+        'total_amount': order.total_amount,
+        'status': order.status,
+        'payment_method': order.payment_method,
+        'payment_status': order.payment_status,
+        'rejection_reason': order.rejection_reason,
+        'items': order_items
+    }), 200
 
-@app.route('/admin/order/update_status/<int:order_id>', methods=['POST'])
-def admin_update_order_status(order_id):
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    status = request.form['status']
-    
-    connection = create_connection()
-    if connection:
-        try:
-            cursor = connection.cursor()
-            
-            cursor.execute("""
-                UPDATE Orders
-                SET status = %s
-                WHERE order_id = %s
-            """, (status, order_id))
-            
-            connection.commit()
-            flash("Order status updated successfully!")
-            
-        except Error as e:
-            connection.rollback()
-            print(f"Database error: {e}")
-            flash("Error updating order status.")
-            
-        finally:
-            cursor.close()
-            connection.close()
-    
-    return redirect(url_for('admin_view_order', order_id=order_id))
+@app.route('/orders/<int:order_id>/status', methods=['PUT'])
+@admin_required
+def update_order_status(order_id):
+    order = Order.query.get_or_404(order_id)
+    data = request.get_json()
+    new_status = data.get('status')
+    if not new_status:
+        return jsonify({'message': 'Status is required'}), 400
+    if new_status == 'Rejected' and not data.get('rejection_reason'):
+        return jsonify({'message': 'Rejection reason is required'}), 400
+    order.status = new_status
+    if new_status == 'Rejected':
+        order.rejection_reason = data.get('rejection_reason')
+    db.session.commit()
+    return jsonify({'message': f'Order status updated to {new_status}'}), 200
 
-@app.route('/admin/promotions')
-def admin_promotions():
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if connection:
-        cursor = connection.cursor(dictionary=True)
-        
-        cursor.execute("""
-            SELECT p.*, COUNT(rp.restaurant_id) as restaurant_count
-            FROM Promotions p
-            LEFT JOIN RestaurantPromotions rp ON p.promo_id = rp.promo_id
-            GROUP BY p.promo_id
-            ORDER BY p.end_date DESC
-        """)
-        
-        promotions = cursor.fetchall()
-        cursor.close()
-        connection.close()
-        
-        return render_template('admin_promotions.html', promotions=promotions)
-    
-    return "Database connection error", 500
+@app.route('/orders/<int:order_id>/cancel', methods=['PUT'])
+@login_required
+def cancel_order(order_id):
+    user = User.query.get(session['user_id'])
+    order = Order.query.get_or_404(order_id)
+    if not user.is_admin and order.user_id != user.user_id:
+        return jsonify({'message': 'Access denied'}), 403
+    if order.status not in ['Pending', 'Confirmed']:
+        return jsonify({'message': 'Cannot cancel order in current status'}), 400
+    order.status = 'Cancelled'
+    db.session.commit()
+    return jsonify({'message': 'Order cancelled successfully'}), 200
 
-@app.route('/admin/promotion/add', methods=['GET', 'POST'])
-def admin_add_promotion():
-    if 'admin' not in session:
-        return redirect(url_for('admin_login'))
-    
-    connection = create_connection()
-    if not connection:
-        flash("Database connection error")
-        return redirect(url_for('admin_promotions'))
-    
-    cursor = connection.cursor(dictionary=True)
-    
-    # Get restaurants for checkboxes
-    cursor.execute("SELECT restaurant_id, name FROM Restaurants WHERE is_active = TRUE ORDER BY name")
-    restaurants = cursor.fetchall()
-    
-    if request.method == 'POST':
-        code = request.form['code']
-        description = request.form['description']
-        discount_percentage = request.form.get('discount_percentage') or None
-        discount_amount = request.form.get('discount_amount') or None
-        min_order_value = request.form.get('min_order_value') or None
-        start_date = request.form['start_date']
-        end_date = request.form['end_date']
-        is_active = 'is_active' in request.form
-        restaurant_ids = request.form.getlist('restaurants')
-        
-        try:
-            cursor.execute("""
-                INSERT INTO Promotions (code, description, discount_percentage, discount_amount, 
-                                       min_order_value, start_date, end_date, is_active)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (code, description, discount_percentage, discount_amount, 
-                  min_order_value, start_date, end_date, is_active))
-            
-            promo_id = cursor.lastrowid
-            
-            # Add restaurant-promotion relationships
-            for restaurant_id in restaurant_ids:
-                cursor.execute("""
-                    INSERT INTO RestaurantPromotions (restaurant_id, promo_id)
-                    VALUES (%s, %s)
-                """, (restaurant_id, promo_id))
-            
-            connection.commit()
-            flash("Promotion added successfully!")
-            return redirect(url_for('admin_promotions'))
-        except Error as e:
-            connection.rollback()
-            print(f"Database error: {e}")
-            flash("Error adding promotion. Please try again.")
-        finally:
-            cursor.close()
-            connection.close()
-    
-    return render_template('admin_add_promotion.html', restaurants=restaurants)
+# Review routes
+@app.route('/reviews', methods=['POST'])
+@login_required
+def add_review():
+    data = request.get_json()
+    order_id = data.get('order_id')
+    order = Order.query.get_or_404(order_id)
+    if order.user_id != session['user_id']:
+        return jsonify({'message': 'You can only review your own orders'}), 403
+    if order.status != 'Delivered':
+        return jsonify({'message': 'You can only review delivered orders'}), 400
+    existing_review = Review.query.filter_by(order_id=order_id).first()
+    if existing_review:
+        return jsonify({'message': 'You have already reviewed this order'}), 400
+    new_review = Review(
+        user_id=session['user_id'],
+        order_id=order_id,
+        rating=data['rating'],
+        comment=data.get('comment', '')
+    )
+    db.session.add(new_review)
+    db.session.commit()
+    return jsonify({'message': 'Review added successfully', 'review_id': new_review.review_id}), 201
+
+@app.route('/reviews', methods=['GET'])
+def get_reviews():
+    reviews = Review.query.order_by(Review.review_date.desc()).all()
+    reviews_data = []
+    for review in reviews:
+        reviews_data.append({
+            'review_id': review.review_id,
+            'user_id': review.user_id,
+            'username': review.user.username,
+            'order_id': review.order_id,
+            'rating': review.rating,
+            'comment': review.comment,
+            'review_date': review.review_date.isoformat()
+        })
+    return jsonify({'reviews': reviews_data}), 200
+
+@app.route('/admin_stats', methods=['GET'])
+@admin_required
+def admin_stats():
+    from sqlalchemy import func
+
+    total_orders = Order.query.count()
+    total_revenue = db.session.query(func.sum(Order.total_amount)).scalar() or 0.0
+    pending_orders = Order.query.filter_by(status='Pending').count()
+
+    stats = {
+        'total_orders': total_orders,
+        'total_revenue': total_revenue,
+        'pending_orders': pending_orders
+    }
+    return jsonify(stats), 200
+
+# Routes to serve HTML templates
+@app.route('/')
+def home():
+    # Render the login page as the home page.
+    return render_template('login.html')
+
+@app.route('/admin_dashboard.html')
+@admin_required
+def admin_dashboard():
+    return render_template('admin.html')
+
+@app.route('/admin_menu.html')
+@admin_required
+def admin_menu():
+    # You can create a dedicated admin menu page or reuse the customer menu layout.
+    return render_template('admin_menu.html')
+
+@app.route('/admin_orders.html')
+@admin_required
+def admin_orders():
+    return render_template('admin_orders.html')
+
+@app.route('/admin_reviews.html')
+@admin_required
+def admin_reviews():
+    return render_template('admin_reviews.html')
+
+@app.route('/menu.html')
+@login_required
+def menu_page():
+    return render_template('menu.html')
+
+@app.route('/my_orders.html')
+@login_required
+def orders_page():
+    return render_template('orders.html')
+
+@app.route('/reviews.html')
+@login_required
+def client_reviews():
+    return render_template('reviews.html')
+
+def initialize_app():
+    with app.app_context():
+        db.create_all()
+        admin = User.query.filter_by(username='admin').first()
+        if not admin:
+            admin = User(
+                username='admin',
+                password=generate_password_hash('admin123'),
+                email='admin@restaurant.com',
+                is_admin=True
+            )
+            db.session.add(admin)
+            db.session.commit()
+            print("Admin user created")
+        else:
+            print("Admin user already exists")
 
 if __name__ == '__main__':
+    initialize_app()
     app.run(debug=True)

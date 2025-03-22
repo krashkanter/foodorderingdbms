@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Restaurant Menu</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #c0c0c0;
+            margin: 20px;
+        }
+        .navbar {
+            background-color: #000080;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        .navbar a {
+            color: white;
+            margin-right: 15px;
+            text-decoration: none;
+        }
+        .navbar .logout {
+            float: right;
+        }
+        .categories {
+            margin-bottom: 20px;
+        }
+        .category-button {
+            background-color: #008080;
+            color: white;
+            padding: 5px 10px;
+            margin-right: 5px;
+            cursor: pointer;
+            border: 1px solid black;
+        }
+        .dish {
+            background-color: #f0f0f0;
+            border: 2px solid black;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .dish h3 {
+            margin-top: 0;
+            color: #800000;
+        }
+        .vegetarian {
+            color: green;
+            font-weight: bold;
+        }
+        .cart {
+            background-color: #f0f0f0;
+            border: 2px solid black;
+            padding: 10px;
+            margin-top: 20px;
+        }
+        .cart-item {
+            margin-bottom: 5px;
+            padding: 5px;
+            background-color: #ffffff;
+            border: 1px solid gray;
+        }
+        button {
+            background-color: #008080;
+            color: white;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        input, textarea {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <a href="/menu.html">Menu</a>
+        <a href="/my_orders.html">My Orders</a>
+        <a href="#" class="logout" id="logoutButton">Logout</a>
+    </div>
+    
+    <h1>Our Menu</h1>
+    
+    <div class="categories">
+        <button class="category-button" onclick="filterByCategory('all')">All</button>
+        <button class="category-button" onclick="filterByCategory('Appetizer')">Appetizers</button>
+        <button class="category-button" onclick="filterByCategory('Main Course')">Main Courses</button>
+        <button class="category-button" onclick="filterByCategory('Dessert')">Desserts</button>
+        <button class="category-button" onclick="filterByCategory('Beverage')">Beverages</button>
+    </div>
+    
+    <div id="dishes-container"></div>
+    
+    <div class="cart">
+        <h2>Your Cart</h2>
+        <div id="cart-items"></div>
+        <div id="cart-total">Total: $0.00</div>
+        <h3>Checkout</h3>
+        <form id="order-form">
+            <label for="delivery-address">Delivery Address:</label>
+            <textarea id="delivery-address" required rows="3" cols="50"></textarea>
+            
+            <label for="payment-method">Payment Method:</label>
+            <select id="payment-method" required>
+                <option value="Credit Card">Credit Card</option>
+                <option value="Debit Card">Debit Card</option>
+                <option value="Cash on Delivery">Cash on Delivery</option>
+                <option value="Digital Wallet">Digital Wallet</option>
+            </select>
+            
+            <button type="submit">Place Order</button>
+        </form>
+        <div id="order-message"></div>
+    </div>
+    
+    <script>
+        let currentCategory = 'all';
+        let dishes = [];
+        let cart = [];
+        
+        // Load dishes when page loads
+        window.onload = function() {
+            fetchDishes();
+        };
+        
+        function fetchDishes() {
+            fetch('/dishes?available=true')
+                .then(response => response.json())
+                .then(data => {
+                    dishes = data.dishes;
+                    displayDishes();
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+        }
+        
+        function displayDishes() {
+            const container = document.getElementById('dishes-container');
+            container.innerHTML = '';
+            
+            dishes.forEach(dish => {
+                if (currentCategory === 'all' || dish.category === currentCategory) {
+                    const dishDiv = document.createElement('div');
+                    dishDiv.className = 'dish';
+                    
+                    dishDiv.innerHTML = `
+                        <h3>${dish.name} ${dish.is_vegetarian ? '<span class="vegetarian">(Vegetarian)</span>' : ''}</h3>
+                        <p>${dish.description}</p>
+                        <p><strong>Price: $${dish.price.toFixed(2)}</strong></p>
+                        <label>Quantity: <input type="number" min="1" value="1" id="qty-${dish.dish_id}"></label>
+                        <br>
+                        <label>Special Instructions: <input type="text" id="instr-${dish.dish_id}"></label>
+                        <br>
+                        <button onclick="addToCart(${dish.dish_id}, '${dish.name}', ${dish.price})">Add to Cart</button>
+                    `;
+                    
+                    container.appendChild(dishDiv);
+                }
+            });
+        }
+        
+        function filterByCategory(category) {
+            currentCategory = category;
+            displayDishes();
+        }
+        
+        function addToCart(dishId, dishName, price) {
+            const quantity = parseInt(document.getElementById(`qty-${dishId}`).value);
+            const instructions = document.getElementById(`instr-${dishId}`).value;
+            
+            // Check if item already in cart
+            const existingItem = cart.find(item => item.dish_id === dishId);
+            
+            if (existingItem) {
+                existingItem.quantity += quantity;
+            } else {
+                cart.push({
+                    dish_id: dishId,
+                    name: dishName,
+                    price: price,
+                    quantity: quantity,
+                    special_instructions: instructions
+                });
+            }
+            
+            updateCartDisplay();
+        }
+        
+        function removeFromCart(index) {
+            cart.splice(index, 1);
+            updateCartDisplay();
+        }
+        
+        function updateCartDisplay() {
+            const cartContainer = document.getElementById('cart-items');
+            cartContainer.innerHTML = '';
+            
+            let total = 0;
+            
+            cart.forEach((item, index) => {
+                const itemTotal = item.price * item.quantity;
+                total += itemTotal;
+                
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'cart-item';
+                itemDiv.innerHTML = `
+                    ${item.name} x ${item.quantity} = $${itemTotal.toFixed(2)}
+                    ${item.special_instructions ? '<br>Note: ' + item.special_instructions : ''}
+                    <button onclick="removeFromCart(${index})" style="float: right;">Remove</button>
+                `;
+                
+                cartContainer.appendChild(itemDiv);
+            });
+            
+            document.getElementById('cart-total').textContent = `Total: $${total.toFixed(2)}`;
+        }
+        
+        // Handle order placement
+        document.getElementById('order-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            if (cart.length === 0) {
+                document.getElementById('order-message').textContent = 'Your cart is empty!';
+                return;
+            }
+            
+            const address = document.getElementById('delivery-address').value;
+            const paymentMethod = document.getElementById('payment-method').value;
+            
+            // Format cart items for API
+            const orderItems = cart.map(item => ({
+                dish_id: item.dish_id,
+                quantity: item.quantity,
+                special_instructions: item.special_instructions
+            }));
+            
+            fetch('/orders', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    delivery_address: address,
+                    payment_method: paymentMethod,
+                    dishes: orderItems
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('order-message').textContent = data.message;
+                
+                if (data.message === 'Order placed successfully') {
+                    // Clear cart
+                    cart = [];
+                    updateCartDisplay();
+                    document.getElementById('delivery-address').value = '';
+                    
+                    // Redirect to orders page
+                    setTimeout(() => {
+                        window.location.href = '/my_orders.html';
+                    }, 2000);
+                }
+            })
+            .catch(error => {
+                document.getElementById('order-message').textContent = 'Error placing order: ' + error;
+            });
+        });
+        
+        // Logout functionality
+        document.getElementById('logoutButton').addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            fetch('/logout', {
+                method: 'POST',
+            })
+            .then(response => response.json())
+            .then(data => {
+                window.location.href = '/index.html';
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        });
+    </script>
+</body>
+</html>

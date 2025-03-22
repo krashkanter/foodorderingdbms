@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #c0c0c0;
+            margin: 20px;
+        }
+        .navbar {
+            background-color: #800000;
+            padding: 10px;
+            margin-bottom: 20px;
+            overflow: auto;
+        }
+        .navbar a {
+            color: white;
+            margin-right: 15px;
+            text-decoration: none;
+            float: left;
+        }
+        .navbar .logout {
+            float: right;
+        }
+        h1, h2 {
+            color: #800000;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .card {
+            background-color: #f0f0f0;
+            border: 2px solid black;
+            padding: 15px;
+            flex: 1;
+            min-width: 300px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 1px solid black;
+            padding: 5px;
+            text-align: left;
+        }
+        th {
+            background-color: #000080;
+            color: white;
+        }
+        button {
+            background-color: #008080;
+            color: white;
+            padding: 5px 10px;
+            cursor: pointer;
+            margin: 2px;
+        }
+        .status-pending { color: blue; }
+        .status-confirmed { color: purple; }
+        .status-preparing { color: orange; }
+        .status-ready { color: #008080; }
+        .status-delivery { color: #800080; }
+        .status-delivered { color: green; }
+        .status-rejected { color: red; }
+        .status-cancelled { color: #808080; }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <a href="/admin_dashboard.html">Dashboard</a>
+        <a href="/admin_menu.html">Manage Menu</a>
+        <a href="/admin_orders.html">Manage Orders</a>
+        <a href="/admin_reviews.html">Reviews</a>
+        <a href="#" class="logout" id="logoutButton">Logout</a>
+    </div>
+    
+    <h1>Admin Dashboard</h1>
+    
+    <div class="container">
+        <!-- Recent Orders Card -->
+        <div class="card" style="flex: 2;">
+            <h2>Recent Orders</h2>
+            <div id="recent-orders">
+                <p>Loading recent orders...</p>
+            </div>
+            <button onclick="window.location.href='/admin_orders.html'">View All Orders</button>
+        </div>
+        
+        <!-- Recent Reviews Card -->
+        <div class="card" style="flex: 1;">
+            <h2>Recent Reviews</h2>
+            <div id="recent-reviews">
+                <p>Loading recent reviews...</p>
+            </div>
+            <button onclick="window.location.href='/admin_reviews.html'">View All Reviews</button>
+        </div>
+        
+        <!-- Quick Statistics Card -->
+        <div class="card" style="flex: 1;">
+            <h2>Quick Statistics</h2>
+            <div id="quick-stats">
+                <p>Loading statistics...</p>
+            </div>
+        </div>
+        
+        <!-- Quick Actions Card -->
+        <div class="card" style="flex: 1;">
+            <h2>Quick Actions</h2>
+            <button onclick="window.location.href='/admin_menu.html'">Manage Menu</button>
+            <button onclick="window.location.href='/admin_orders.html'">Process Orders</button>
+        </div>
+    </div>
+    
+    <script>
+        window.onload = function() {
+            fetchRecentOrders();
+            fetchRecentReviews();
+            fetchQuickStats();
+            
+            document.getElementById('logoutButton').addEventListener('click', function(e) {
+                e.preventDefault();
+                fetch('/logout', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => window.location.href = '/')
+                    .catch(error => console.error('Logout error:', error));
+            });
+        };
+
+        function fetchRecentOrders() {
+            fetch('/orders')
+                .then(response => response.json())
+                .then(data => {
+                    const orders = data.orders.slice(0, 5); // Show 5 most recent orders
+                    let html = '<table>';
+                    html += '<tr><th>ID</th><th>Customer</th><th>Date</th><th>Total</th><th>Status</th></tr>';
+                    orders.forEach(order => {
+                        const date = new Date(order.order_date).toLocaleDateString();
+                        let statusClass = '';
+                        switch(order.status) {
+                            case 'Pending': statusClass = 'status-pending'; break;
+                            case 'Confirmed': statusClass = 'status-confirmed'; break;
+                            case 'Preparing': statusClass = 'status-preparing'; break;
+                            case 'Ready for Pickup': statusClass = 'status-ready'; break;
+                            case 'Out for Delivery': statusClass = 'status-delivery'; break;
+                            case 'Delivered': statusClass = 'status-delivered'; break;
+                            case 'Rejected': statusClass = 'status-rejected'; break;
+                            case 'Cancelled': statusClass = 'status-cancelled'; break;
+                        }
+                        html += `<tr>
+                            <td>${order.order_id}</td>
+                            <td>${order.username}</td>
+                            <td>${date}</td>
+                            <td>$${order.total_amount.toFixed(2)}</td>
+                            <td><span class="${statusClass}">${order.status}</span></td>
+                        </tr>`;
+                    });
+                    html += '</table>';
+                    document.getElementById('recent-orders').innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error loading recent orders:', error);
+                    document.getElementById('recent-orders').innerHTML = 'Error loading orders.';
+                });
+        }
+        
+        function fetchRecentReviews() {
+            fetch('/reviews')
+                .then(response => response.json())
+                .then(data => {
+                    const reviews = data.reviews.slice(0, 5);
+                    let html = '<ul>';
+                    if (reviews.length === 0) {
+                        html = '<p>No reviews found.</p>';
+                    } else {
+                        reviews.forEach(review => {
+                            html += `<li>${review.username} rated ${review.rating} - "${review.comment}"</li>`;
+                        });
+                        html += '</ul>';
+                    }
+                    document.getElementById('recent-reviews').innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error loading recent reviews:', error);
+                    document.getElementById('recent-reviews').innerHTML = 'Error loading reviews.';
+                });
+        }
+        
+        function fetchQuickStats() {
+            fetch('/admin_stats')
+                .then(response => response.json())
+                .then(stats => {
+                    const statsHtml = `
+                        <p>Total Orders: ${stats.total_orders}</p>
+                        <p>Total Revenue: $${stats.total_revenue.toFixed(2)}</p>
+                        <p>Pending Orders: ${stats.pending_orders}</p>
+                    `;
+                    document.getElementById('quick-stats').innerHTML = statsHtml;
+                })
+                .catch(error => {
+                    console.error('Error loading statistics:', error);
+                    document.getElementById('quick-stats').innerHTML = 'Error loading statistics.';
+                });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>My Orders</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #c0c0c0;
+            margin: 20px;
+        }
+        .navbar {
+            background-color: #000080;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        .navbar a {
+            color: white;
+            margin-right: 15px;
+            text-decoration: none;
+        }
+        .navbar .logout {
+            float: right;
+        }
+        .order {
+            background-color: #f0f0f0;
+            border: 2px solid black;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        .order-header {
+            background-color: #008080;
+            color: white;
+            padding: 5px;
+            margin-bottom: 10px;
+        }
+        .order-items {
+            margin-left: 20px;
+        }
+        .order-item {
+            padding: 5px;
+            border-bottom: 1px solid gray;
+        }
+        .filter-options {
+            margin-bottom: 15px;
+        }
+        button {
+            background-color: #008080;
+            color: white;
+            padding: 5px 10px;
+            cursor: pointer;
+            margin-right: 5px;
+        }
+        .status-pending { color: blue; }
+        .status-confirmed { color: purple; }
+        .status-preparing { color: orange; }
+        .status-ready { color: #008080; }
+        .status-delivery { color: #800080; }
+        .status-delivered { color: green; }
+        .status-rejected { color: red; }
+        .status-cancelled { color: #808080; }
+        
+        .review-form {
+            background-color: #e0e0e0;
+            padding: 10px;
+            margin-top: 10px;
+            border: 1px solid gray;
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <a href="/menu.html">Menu</a>
+        <a href="/my_orders.html">My Orders</a>
+        <a href="#" class="logout" id="logoutButton">Logout</a>
+    </div>
+    
+    <h1>My Orders</h1>
+    
+    <div class="filter-options">
+        <b>Filter by status:</b>
+        <button onclick="filterOrders('all')">All</button>
+        <button onclick="filterOrders('Pending')">Pending</button>
+        <button onclick="filterOrders('Confirmed')">Confirmed</button>
+        <button onclick="filterOrders('Preparing')">Preparing</button>
+        <button onclick="filterOrders('Ready for Pickup')">Ready</button>
+        <button onclick="filterOrders('Out for Delivery')">Out for Delivery</button>
+        <button onclick="filterOrders('Delivered')">Delivered</button>
+        <button onclick="filterOrders('Rejected')">Rejected</button>
+        <button onclick="filterOrders('Cancelled')">Cancelled</button>
+    </div>
+    
+    <div id="orders-container">
+        <p>Loading orders...</p>
+    </div>
+    
+    <script>
+        let userOrders = [];
+        let currentFilter = 'all';
+        
+        // Load orders when page loads
+        window.onload = function() {
+            fetchOrders();
+        };
+        
+        function fetchOrders() {
+            fetch('/orders')
+                .then(response => response.json())
+                .then(data => {
+                    userOrders = data.orders;
+                    displayOrders();
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('orders-container').innerHTML = 'Error loading orders.';
+                });
+        }
+        
+        function displayOrders() {
+            const container = document.getElementById('orders-container');
+            container.innerHTML = '';
+            
+            if (userOrders.length === 0) {
+                container.innerHTML = 'You have no orders yet.';
+                return;
+            }
+            
+            userOrders.forEach(order => {
+                if (currentFilter === 'all' || order.status === currentFilter) {
+                    const orderDiv = document.createElement('div');
+                    orderDiv.className = 'order';
+                    
+                    // Determine the status class
+                    let statusClass = '';
+                    switch(order.status) {
+                        case 'Pending': statusClass = 'status-pending'; break;
+                        case 'Confirmed': statusClass = 'status-confirmed'; break;
+                        case 'Preparing': statusClass = 'status-preparing'; break;
+                        case 'Ready for Pickup': statusClass = 'status-ready'; break;
+                        case 'Out for Delivery': statusClass = 'status-delivery'; break;
+                        case 'Delivered': statusClass = 'status-delivered'; break;
+                        case 'Rejected': statusClass = 'status-rejected'; break;
+                        case 'Cancelled': statusClass = 'status-cancelled'; break;
+                    }
+                    
+                    const orderDate = new Date(order.order_date).toLocaleString();
+                    
+                    let headerHtml = `
+                        <div class="order-header">
+                            <strong>Order #${order.order_id}</strong> - ${orderDate} - 
+                            <span class="${statusClass}"><b>${order.status}</b></span>
+                        </div>
+                    `;
+                    
+                    let itemsHtml = '<div class="order-items">';
+                    order.items.forEach(item => {
+                        itemsHtml += `
+                            <div class="order-item">
+                                ${item.dish_name} x ${item.quantity} = $${(item.item_price * item.quantity).toFixed(2)}
+                                ${item.special_instructions ? '<br>Note: ' + item.special_instructions : ''}
+                            </div>
+                        `;
+                    });
+                    itemsHtml += '</div>';
+                    
+                    let detailsHtml = `
+                        <p><strong>Total Amount:</strong> $${order.total_amount.toFixed(2)}</p>
+                        <p><strong>Delivery Address:</strong> ${order.delivery_address}</p>
+                        <p><strong>Payment Method:</strong> ${order.payment_method}</p>
+                        <p><strong>Payment Status:</strong> ${order.payment_status ? 'Paid' : 'Not Paid'}</p>
+                    `;
+                    
+                    // Add rejection reason if order was rejected
+                    if (order.status === 'Rejected' && order.rejection_reason) {
+                        detailsHtml += `<p><strong>Rejection Reason:</strong> ${order.rejection_reason}</p>`;
+                    }
+                    
+                    // Add cancel button for orders that can be cancelled
+                    let actionsHtml = '';
+                    if (order.status === 'Pending' || order.status === 'Confirmed') {
+                        actionsHtml += `<button onclick="cancelOrder(${order.order_id})">Cancel Order</button>`;
+                    }
+                    
+                    // Add review form for delivered orders
+                    let reviewHtml = '';
+                    if (order.status === 'Delivered') {
+                        reviewHtml = `
+                            <div class="review-form" id="review-form-${order.order_id}">
+                                <h4>Leave a Review</h4>
+                                <p>Rating:
+                                    <select id="rating-${order.order_id}">
+                                        <option value="5">5 - Excellent</option>
+                                        <option value="4">4 - Very Good</option>
+                                        <option value="3">3 - Good</option>
+                                        <option value="2">2 - Fair</option>
+                                        <option value="1">1 - Poor</option>
+                                    </select>
+                                </p>
+                                <p>
+                                    <label>Comment:<br>
+                                    <textarea id="comment-${order.order_id}" rows="3" cols="40"></textarea>
+                                    </label>
+                                </p>
+                                <button onclick="submitReview(${order.order_id})">Submit Review</button>
+                                <span id="review-message-${order.order_id}"></span>
+                            </div>
+                        `;
+                    }
+                    
+                    orderDiv.innerHTML = headerHtml + detailsHtml + itemsHtml + actionsHtml + reviewHtml;
+                    container.appendChild(orderDiv);
+                }
+            });
+        }
+        
+        function filterOrders(filter) {
+            currentFilter = filter;
+            displayOrders();
+        }
+        
+        function cancelOrder(orderId) {
+            if (confirm("Are you sure you want to cancel this order?")) {
+                fetch(`/orders/${orderId}/cancel`, {
+                    method: 'PUT',
+                })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message);
+                    // Refresh orders
+                    fetchOrders();
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error cancelling order');
+                });
+            }
+        }
+        
+        function submitReview(orderId) {
+            const rating = document.getElementById(`rating-${orderId}`).value;
+            const comment = document.getElementById(`comment-${orderId}`).value;
+            
+            fetch('/reviews', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    order_id: orderId,
+                    rating: rating,
+                    comment: comment
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById(`review-message-${orderId}`).textContent = data.message;
+                
+                if (data.message === 'Review added successfully') {
+                    // Disable the review form
+                    setTimeout(() => {
+                        document.getElementById(`review-form-${orderId}`).innerHTML = '<p>Thank you for your review!</p>';
+                    }, 1000);
+                }
+            })
+            .catch(error => {
+                document.getElementById(`review-message-${orderId}`).textContent = 'Error submitting review';
+                console.error('Error:', error);
+            });
+        }
+        
+        // Logout functionality
+        document.getElementById('logoutButton').addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            fetch('/logout', {
+                method: 'POST',
+            })
+            .then(response => response.json())
+            .then(data => {
+                window.location.href = '/index.html';
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        });
+    </script>
+</body>
+</html>

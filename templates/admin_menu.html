@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Menu Management</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #c0c0c0;
+            margin: 20px;
+        }
+        .navbar {
+            background-color: #800000;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+        .navbar a {
+            color: white;
+            margin-right: 15px;
+            text-decoration: none;
+        }
+        .navbar .logout {
+            float: right;
+        }
+        h1, h2 {
+            color: #800000;
+        }
+        form {
+            background-color: #f0f0f0;
+            padding: 15px;
+            border: 2px solid black;
+            margin-bottom: 20px;
+        }
+        input, textarea {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: #008080;
+            color: white;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        li {
+            background-color: #f0f0f0;
+            border: 1px solid black;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <a href="/admin_dashboard.html">Dashboard</a>
+        <a href="/admin_menu.html">Manage Menu</a>
+        <a href="/admin_orders.html">Manage Orders</a>
+        <a href="/admin_reviews.html">Reviews</a>
+        <a href="#" class="logout" id="logoutButton">Logout</a>
+    </div>
+    
+    <h1>Manage Dishes</h1>
+    
+    <div>
+        <h2>Add a New Dish</h2>
+        <form id="addDishForm">
+            <label for="dishName">Name:</label>
+            <input type="text" id="dishName" required>
+            
+            <label for="dishDescription">Description:</label>
+            <textarea id="dishDescription"></textarea>
+            
+            <label for="dishPrice">Price:</label>
+            <input type="number" step="0.01" id="dishPrice" required>
+            
+            <label for="dishCategory">Category:</label>
+            <input type="text" id="dishCategory">
+            
+            <label for="isVegetarian">Vegetarian:</label>
+            <input type="checkbox" id="isVegetarian">
+            
+            <label for="isAvailable">Available:</label>
+            <input type="checkbox" id="isAvailable" checked>
+            
+            <button type="submit">Add Dish</button>
+        </form>
+        <div id="addDishMessage"></div>
+    </div>
+    
+    <div>
+        <h2>Existing Dishes</h2>
+        <div id="dishesList">
+            <p>Loading dishes...</p>
+        </div>
+    </div>
+    
+    <script>
+        // Function to load and display all dishes (both available and unavailable)
+        function loadDishes() {
+            fetch('/dishes?available=false')
+            .then(response => response.json())
+            .then(data => {
+                const dishes = data.dishes;
+                let html = '';
+                if (dishes.length === 0) {
+                    html = '<p>No dishes found.</p>';
+                } else {
+                    html = '<ul>';
+                    dishes.forEach(dish => {
+                        html += `<li>
+                            <strong>${dish.name}</strong> - $${dish.price.toFixed(2)} - ${dish.category || 'No category'} 
+                            ${dish.is_vegetarian ? '<em>(Vegetarian)</em>' : ''}
+                            <button onclick="deleteDish(${dish.dish_id})" style="float:right;">Delete</button>
+                        </li>`;
+                    });
+                    html += '</ul>';
+                }
+                document.getElementById('dishesList').innerHTML = html;
+            })
+            .catch(error => {
+                document.getElementById('dishesList').innerHTML = 'Error loading dishes.';
+                console.error('Error loading dishes:', error);
+            });
+        }
+        
+        // Handle add dish form submission
+        document.getElementById('addDishForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const name = document.getElementById('dishName').value;
+            const description = document.getElementById('dishDescription').value;
+            const price = parseFloat(document.getElementById('dishPrice').value);
+            const category = document.getElementById('dishCategory').value;
+            const isVegetarian = document.getElementById('isVegetarian').checked;
+            const isAvailable = document.getElementById('isAvailable').checked;
+            
+            fetch('/dishes', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    name: name,
+                    description: description,
+                    price: price,
+                    category: category,
+                    is_vegetarian: isVegetarian,
+                    is_available: isAvailable
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('addDishMessage').innerText = data.message;
+                // Clear the form fields
+                document.getElementById('addDishForm').reset();
+                loadDishes();
+            })
+            .catch(error => {
+                document.getElementById('addDishMessage').innerText = 'Error adding dish.';
+                console.error('Error adding dish:', error);
+            });
+        });
+        
+        // Function to delete a dish
+        function deleteDish(dishId) {
+            if (confirm("Are you sure you want to delete this dish?")) {
+                fetch(`/dishes/${dishId}`, { method: 'DELETE' })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message);
+                    loadDishes();
+                })
+                .catch(error => {
+                    alert("Error deleting dish.");
+                    console.error('Error deleting dish:', error);
+                });
+            }
+        }
+        
+        // Logout functionality
+        document.getElementById('logoutButton').addEventListener('click', function(e) {
+            e.preventDefault();
+            fetch('/logout', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => window.location.href = '/')
+            .catch(error => console.error('Logout error:', error));
+        });
+        
+        // Load the list of dishes when the page loads
+        window.onload = function() {
+            loadDishes();
+        };
+    </script>
+</body>
+</html>
