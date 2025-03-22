@@ -12,11 +12,13 @@
             background-color: #000080;
             padding: 10px;
             margin-bottom: 20px;
+            overflow: auto;
         }
         .navbar a {
             color: white;
             margin-right: 15px;
             text-decoration: none;
+            float: left;
         }
         .navbar .logout {
             float: right;
@@ -73,6 +75,7 @@
     <div class="navbar">
         <a href="/menu.html">Menu</a>
         <a href="/my_orders.html">My Orders</a>
+        <a href="/reviews.html">Reviews</a>
         <a href="#" class="logout" id="logoutButton">Logout</a>
     </div>
     
@@ -115,9 +118,15 @@
         let dishes = [];
         let cart = [];
         
-        // Load dishes when page loads
         window.onload = function() {
             fetchDishes();
+            document.getElementById('logoutButton').addEventListener('click', function(e) {
+                e.preventDefault();
+                fetch('/logout', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => window.location.href = '/')
+                    .catch(error => console.error('Logout error:', error));
+            });
         };
         
         function fetchDishes() {
@@ -166,7 +175,6 @@
             const quantity = parseInt(document.getElementById(`qty-${dishId}`).value);
             const instructions = document.getElementById(`instr-${dishId}`).value;
             
-            // Check if item already in cart
             const existingItem = cart.find(item => item.dish_id === dishId);
             
             if (existingItem) {
@@ -213,7 +221,6 @@
             document.getElementById('cart-total').textContent = `Total: $${total.toFixed(2)}`;
         }
         
-        // Handle order placement
         document.getElementById('order-form').addEventListener('submit', function(e) {
             e.preventDefault();
             
@@ -225,7 +232,6 @@
             const address = document.getElementById('delivery-address').value;
             const paymentMethod = document.getElementById('payment-method').value;
             
-            // Format cart items for API
             const orderItems = cart.map(item => ({
                 dish_id: item.dish_id,
                 quantity: item.quantity,
@@ -248,12 +254,10 @@
                 document.getElementById('order-message').textContent = data.message;
                 
                 if (data.message === 'Order placed successfully') {
-                    // Clear cart
                     cart = [];
                     updateCartDisplay();
                     document.getElementById('delivery-address').value = '';
                     
-                    // Redirect to orders page
                     setTimeout(() => {
                         window.location.href = '/my_orders.html';
                     }, 2000);
@@ -261,22 +265,6 @@
             })
             .catch(error => {
                 document.getElementById('order-message').textContent = 'Error placing order: ' + error;
-            });
-        });
-        
-        // Logout functionality
-        document.getElementById('logoutButton').addEventListener('click', function(e) {
-            e.preventDefault();
-            
-            fetch('/logout', {
-                method: 'POST',
-            })
-            .then(response => response.json())
-            .then(data => {
-                window.location.href = '/index.html';
-            })
-            .catch(error => {
-                console.error('Error:', error);
             });
         });
     </script>
